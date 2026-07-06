@@ -2015,7 +2015,7 @@ impl AppState {
             Some(sel) => sel,
             None => return,
         };
-        if !sel.finish() {
+        if !sel.is_done() && !sel.finish() {
             return;
         }
 

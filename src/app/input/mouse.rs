@@ -1,18 +1,21 @@
 use bytes::Bytes;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::{Direction, Rect};
+use std::time::{Duration, Instant};
 use tracing::warn;
 
 use crate::{
     app::state::{
         AgentPanelSort, AppState, ContextMenuKind, ContextMenuState, DragState, DragTarget,
         MenuListState, Mode, RightClickPassthroughGesture, TabPressState, ViewLayout,
-        WorkspacePressState,
+        WheelScrollDirection, WheelScrollMomentum, WorkspacePressState,
     },
     layout::{PaneInfo, SplitBorder},
     selection::Selection,
     terminal::TerminalRuntimeRegistry,
 };
+
+const WHEEL_ACCELERATION_WINDOW: Duration = Duration::from_millis(140);
 
 #[cfg(test)]
 use super::WheelRouting;
@@ -824,7 +827,11 @@ impl AppState {
                     if was_click {
                         self.selection = None;
                     } else if !was_already_copied {
-                        self.copy_selection(terminal_runtimes);
+                        if self.copy_on_select {
+                            self.copy_selection(terminal_runtimes);
+                        } else if let Some(selection) = self.selection.as_mut() {
+                            selection.finish();
+                        }
                     }
                     return None;
                 }
@@ -1566,7 +1573,7 @@ impl AppState {
         terminal_runtimes: &TerminalRuntimeRegistry,
         mouse: MouseEvent,
     ) {
-        let lines_per_notch = self.mouse_scroll_lines;
+        let lines_per_notch = self.wheel_scroll_lines(mouse.kind);
 
         if let Some(info) = self.pane_at(mouse.column, mouse.row).cloned() {
             self.focus_pane(info.id);
@@ -1608,6 +1615,34 @@ impl AppState {
                 }
             }
         }
+    }
+
+    pub(super) fn wheel_scroll_lines(&mut self, kind: MouseEventKind) -> usize {
+        let direction = match kind {
+            MouseEventKind::ScrollUp => WheelScrollDirection::Up,
+            MouseEventKind::ScrollDown => WheelScrollDirection::Down,
+            _ => return self.mouse_scroll_lines,
+        };
+
+        let now = Instant::now();
+        let mut streak = 1;
+        if let Some(momentum) = self.wheel_scroll_momentum {
+            if momentum.direction == direction
+                && now.saturating_duration_since(momentum.last_event) <= WHEEL_ACCELERATION_WINDOW
+            {
+                streak = momentum.streak.saturating_add(1);
+            }
+        }
+
+        self.wheel_scroll_momentum = Some(WheelScrollMomentum {
+            direction,
+            last_event: now,
+            streak,
+        });
+
+        let max_multiplier = self.mouse_scroll_acceleration.max(1);
+        let multiplier = streak.min(max_multiplier);
+        self.mouse_scroll_lines.saturating_mul(multiplier).max(1)
     }
 
     pub(super) fn forward_pane_mouse_button(
@@ -1895,6 +1930,47 @@ mod tests {
             .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
             .expect("scroll metrics after wheel");
         assert_eq!(metrics.offset_from_bottom, 7);
+    }
+
+    #[tokio::test]
+    async fn terminal_wheel_accelerates_repeated_scroll_events() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        ws.tabs[0].runtimes.insert(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                16 * 1024,
+                &numbered_lines_bytes(64),
+            ),
+        );
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+        app.state.mouse_scroll_lines = 3;
+        app.state.mouse_scroll_acceleration = 4;
+
+        let wheel = mouse(
+            MouseEventKind::ScrollUp,
+            info.inner_rect.x + 1,
+            info.inner_rect.y + 1,
+        );
+        app.handle_mouse(wheel);
+        app.handle_mouse(wheel);
+
+        let metrics = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .and_then(crate::terminal::TerminalRuntime::scroll_metrics)
+            .expect("scroll metrics after accelerated wheel");
+        assert_eq!(metrics.offset_from_bottom, 9);
     }
 
     #[tokio::test]

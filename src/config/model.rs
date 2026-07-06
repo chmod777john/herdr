@@ -5,8 +5,8 @@ use serde::{de, Deserialize, Deserializer, Serialize};
 
 use super::{
     ActionKeybinds, BindingConfig, CommandKeybindConfig, IndexedKeybind, Keybinds, SoundConfig,
-    ThemeConfig, DEFAULT_MOBILE_WIDTH_THRESHOLD, DEFAULT_MOUSE_SCROLL_LINES,
-    DEFAULT_SCROLLBACK_LIMIT_BYTES,
+    ThemeConfig, DEFAULT_MOBILE_WIDTH_THRESHOLD, DEFAULT_MOUSE_SCROLL_ACCELERATION,
+    DEFAULT_MOUSE_SCROLL_LINES, DEFAULT_SCROLLBACK_LIMIT_BYTES,
 };
 
 pub const MAX_TOAST_DELAY_SECONDS: u64 = 3600;
@@ -381,6 +381,8 @@ pub struct KeysConfig {
     pub edit_scrollback: BindingConfig,
     /// Enter keyboard copy mode for the focused pane. Default: "prefix+[".
     pub copy_mode: BindingConfig,
+    /// Copy the current Herdr selection to the clipboard. Default: "ctrl+shift+c".
+    pub copy_selection: BindingConfig,
     /// Focus the pane to the left. Default: "prefix+h".
     pub focus_pane_left: BindingConfig,
     /// Focus the pane below. Default: "prefix+j".
@@ -501,6 +503,8 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     copy_mode: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    copy_selection: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     focus_pane_left: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     focus_pane_down: Option<BindingConfig>,
@@ -593,6 +597,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(rename_pane);
         apply_field!(edit_scrollback);
         apply_field!(copy_mode);
+        apply_field!(copy_selection);
         apply_field!(focus_pane_left);
         apply_field!(focus_pane_down);
         apply_field!(focus_pane_up);
@@ -691,6 +696,7 @@ impl KeysConfig {
         copy_effective_action_field!(rename_pane, keybinds.rename_pane);
         copy_effective_action_field!(edit_scrollback, keybinds.edit_scrollback);
         copy_effective_action_field!(copy_mode, keybinds.copy_mode);
+        copy_effective_action_field!(copy_selection, keybinds.copy_selection);
         copy_effective_action_field!(focus_pane_left, keybinds.focus_pane_left);
         copy_effective_action_field!(focus_pane_down, keybinds.focus_pane_down);
         copy_effective_action_field!(focus_pane_up, keybinds.focus_pane_up);
@@ -786,6 +792,8 @@ pub struct UiConfig {
     pub mobile_width_threshold: u16,
     /// Capture mouse input for Herdr's mouse UI. Default: true.
     pub mouse_capture: bool,
+    /// Copy selected terminal text to the clipboard when the mouse drag ends. Default: true.
+    pub copy_on_select: bool,
     /// Host cursor policy. Default: auto.
     pub host_cursor: HostCursorModeConfig,
     /// Modifier that lets right-click gestures pass through to pane apps. Empty disables it.
@@ -794,6 +802,8 @@ pub struct UiConfig {
     pub redraw_on_focus_gained: bool,
     /// Lines to scroll per mouse wheel notch. Default: 3.
     pub mouse_scroll_lines: Option<NonZeroUsize>,
+    /// Maximum multiplier applied during rapid repeated wheel events. Default: 1.
+    pub mouse_scroll_acceleration: Option<NonZeroUsize>,
     /// Ask for confirmation before closing a workspace. Default: true.
     pub confirm_close: bool,
     /// Ask for a tab name before creating a new tab. Default: true.
@@ -948,6 +958,7 @@ impl Default for KeysConfig {
             rename_pane: BindingConfig::one("prefix+shift+p"),
             edit_scrollback: BindingConfig::one("prefix+e"),
             copy_mode: BindingConfig::one("prefix+["),
+            copy_selection: BindingConfig::one("ctrl+shift+c"),
             focus_pane_left: BindingConfig::one("prefix+h"),
             focus_pane_down: BindingConfig::one("prefix+j"),
             focus_pane_up: BindingConfig::one("prefix+k"),
@@ -989,10 +1000,12 @@ impl Default for UiConfig {
             sidebar_collapsed_mode: SidebarCollapsedModeConfig::Compact,
             mobile_width_threshold: DEFAULT_MOBILE_WIDTH_THRESHOLD,
             mouse_capture: true,
+            copy_on_select: true,
             host_cursor: HostCursorModeConfig::Auto,
             right_click_passthrough_modifier: RightClickPassthroughModifierConfig::default(),
             redraw_on_focus_gained: true,
             mouse_scroll_lines: None,
+            mouse_scroll_acceleration: None,
             confirm_close: true,
             prompt_new_tab_name: true,
             pane_borders: true,
@@ -1012,6 +1025,12 @@ impl UiConfig {
         self.mouse_scroll_lines
             .map(NonZeroUsize::get)
             .unwrap_or(DEFAULT_MOUSE_SCROLL_LINES)
+    }
+
+    pub fn mouse_scroll_acceleration(&self) -> usize {
+        self.mouse_scroll_acceleration
+            .map(NonZeroUsize::get)
+            .unwrap_or(DEFAULT_MOUSE_SCROLL_ACCELERATION)
     }
 
     pub fn right_click_passthrough_modifiers(&self) -> Option<KeyModifiers> {
@@ -1381,6 +1400,19 @@ mouse_capture = false
     }
 
     #[test]
+    fn copy_on_select_default_on_and_parse() {
+        let default_config = Config::default();
+        assert!(default_config.ui.copy_on_select);
+
+        let toml = r#"
+[ui]
+copy_on_select = false
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(!config.ui.copy_on_select);
+    }
+
+    #[test]
     fn right_click_passthrough_modifier_defaults_off_and_parses() {
         let default_config = Config::default();
         assert_eq!(default_config.ui.right_click_passthrough_modifiers(), None);
@@ -1472,13 +1504,19 @@ redraw_on_focus_gained = false
             default_config.ui.mouse_scroll_lines(),
             DEFAULT_MOUSE_SCROLL_LINES
         );
+        assert_eq!(
+            default_config.ui.mouse_scroll_acceleration(),
+            DEFAULT_MOUSE_SCROLL_ACCELERATION
+        );
 
         let toml = r#"
 [ui]
 mouse_scroll_lines = 1
+mouse_scroll_acceleration = 4
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.ui.mouse_scroll_lines(), 1);
+        assert_eq!(config.ui.mouse_scroll_acceleration(), 4);
     }
 
     #[test]
@@ -1486,6 +1524,12 @@ mouse_scroll_lines = 1
         let toml = r#"
 [ui]
 mouse_scroll_lines = 0
+"#;
+        assert!(toml::from_str::<Config>(toml).is_err());
+
+        let toml = r#"
+[ui]
+mouse_scroll_acceleration = 0
 "#;
         assert!(toml::from_str::<Config>(toml).is_err());
     }

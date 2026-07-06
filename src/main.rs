@@ -194,6 +194,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # close_tab = "prefix+shift+x"
 # rename_pane = "prefix+shift+p"
 # edit_scrollback = "prefix+e"
+# copy_mode = "prefix+["
+# copy_selection = "ctrl+shift+c"
 # focus_pane_left = "prefix+h"
 # focus_pane_down = "prefix+j"
 # focus_pane_up = "prefix+k"
@@ -257,6 +259,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Pane apps like lazygit and btop can still receive mouse when they request it.
 # mouse_capture = true
 
+# Copy selected terminal text to the clipboard when a mouse drag ends.
+# Set false to keep Herdr selection highlighting without automatic clipboard writes.
+# copy_on_select = true
+
 # Host cursor policy: "auto", "native", or "drawn".
 # "auto" draws Herdr's own cursor on Windows to avoid ConPTY cursor flicker, and uses the native terminal cursor elsewhere.
 # "native" always uses the outer terminal cursor. "drawn" always draws Herdr's cursor as terminal cell content.
@@ -273,6 +279,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 
 # Pane scrollback lines to scroll per mouse wheel notch.
 # mouse_scroll_lines = 3
+
+# Maximum multiplier for repeated mouse wheel events in the same direction.
+# Keep at 1 to disable acceleration.
+# mouse_scroll_acceleration = 1
 
 # Ask for confirmation before closing a workspace
 # confirm_close = true

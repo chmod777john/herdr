@@ -302,6 +302,19 @@ impl App {
             }
             NavigateAction::EditScrollback => {}
             NavigateAction::CopyMode => self.state.enter_copy_mode(&self.terminal_runtimes),
+            NavigateAction::CopySelection => {
+                self.state.copy_selection(&self.terminal_runtimes);
+                if let Some(content) = self.state.request_clipboard_write.take() {
+                    if self
+                        .event_tx
+                        .try_send(crate::events::AppEvent::ClipboardWrite { content })
+                        .is_err()
+                    {
+                        tracing::warn!("failed to queue clipboard write event");
+                    }
+                }
+                leave_navigate_mode(&mut self.state);
+            }
             NavigateAction::Zoom => {
                 self.zoom_focused_pane_via_api();
                 leave_navigate_mode(&mut self.state);
@@ -1237,6 +1250,7 @@ pub(crate) enum NavigateAction {
     ClosePane,
     EditScrollback,
     CopyMode,
+    CopySelection,
     Zoom,
     EnterResizeMode,
     ToggleSidebar,
@@ -1330,6 +1344,7 @@ fn action_for_key(
         (&kb.rename_pane, NavigateAction::RenamePane),
         (&kb.edit_scrollback, NavigateAction::EditScrollback),
         (&kb.copy_mode, NavigateAction::CopyMode),
+        (&kb.copy_selection, NavigateAction::CopySelection),
         (&kb.focus_pane_left, NavigateAction::FocusPaneLeft),
         (&kb.focus_pane_down, NavigateAction::FocusPaneDown),
         (&kb.focus_pane_up, NavigateAction::FocusPaneUp),
@@ -1547,6 +1562,7 @@ pub(super) fn execute_navigate_action_in_context(
         }
         NavigateAction::EditScrollback => {}
         NavigateAction::CopyMode => state.enter_copy_mode(terminal_runtimes),
+        NavigateAction::CopySelection => {}
         NavigateAction::Zoom => {
             state.toggle_zoom();
             leave_navigate_mode(state);

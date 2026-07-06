@@ -1,4 +1,6 @@
 use crate::config::{Keybinds, NewTerminalCwdConfig, SoundConfig, ToastConfig, ToastDelivery};
+use std::time::Instant;
+
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::layout::{Direction, Rect};
 use ratatui::style::Color;
@@ -45,6 +47,19 @@ pub(crate) struct SelectionAutoscroll {
 pub(crate) struct RightClickPassthroughGesture {
     pub pane_info: PaneInfo,
     pub modifiers: KeyModifiers,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WheelScrollDirection {
+    Up,
+    Down,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WheelScrollMomentum {
+    pub direction: WheelScrollDirection,
+    pub last_event: Instant,
+    pub streak: usize,
 }
 use crate::terminal_theme::{HostAppearance, TerminalTheme};
 use crate::workspace::Workspace;
@@ -1384,10 +1399,13 @@ pub struct AppState {
     /// Capture mouse input for Herdr's own mouse UI. When false, Herdr only
     /// captures mouse while the focused pane app requests mouse reporting.
     pub mouse_capture: bool,
+    pub copy_on_select: bool,
     pub right_click_passthrough_modifiers: Option<KeyModifiers>,
     pub right_click_passthrough: Option<RightClickPassthroughGesture>,
     pub redraw_on_focus_gained: bool,
     pub mouse_scroll_lines: usize,
+    pub mouse_scroll_acceleration: usize,
+    pub wheel_scroll_momentum: Option<WheelScrollMomentum>,
     pub confirm_close: bool,
     pub prompt_new_tab_name: bool,
     pub pane_borders: bool,
@@ -1742,10 +1760,13 @@ impl AppState {
             agent_panel_sort: AgentPanelSort::Spaces,
             next_agent_state_change_seq: 0,
             mouse_capture: true,
+            copy_on_select: true,
             right_click_passthrough_modifiers: None,
             right_click_passthrough: None,
             redraw_on_focus_gained: true,
             mouse_scroll_lines: crate::config::DEFAULT_MOUSE_SCROLL_LINES,
+            mouse_scroll_acceleration: crate::config::DEFAULT_MOUSE_SCROLL_ACCELERATION,
+            wheel_scroll_momentum: None,
             confirm_close: true,
             prompt_new_tab_name: true,
             pane_borders: true,

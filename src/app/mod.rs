@@ -599,10 +599,13 @@ impl App {
             agent_panel_sort,
             next_agent_state_change_seq: 0,
             mouse_capture: config.ui.mouse_capture,
+            copy_on_select: config.ui.copy_on_select,
             right_click_passthrough_modifiers: config.ui.right_click_passthrough_modifiers(),
             right_click_passthrough: None,
             redraw_on_focus_gained: config.ui.redraw_on_focus_gained,
             mouse_scroll_lines: config.ui.mouse_scroll_lines(),
+            mouse_scroll_acceleration: config.ui.mouse_scroll_acceleration(),
+            wheel_scroll_momentum: None,
             confirm_close: config.ui.confirm_close,
             prompt_new_tab_name: config.ui.prompt_new_tab_name,
             pane_borders: config.ui.pane_borders,
@@ -1364,6 +1367,7 @@ impl App {
                     .sidebar_width
                     .clamp(self.state.sidebar_min_width, self.state.sidebar_max_width);
                 self.state.mouse_capture = config.ui.mouse_capture;
+                self.state.copy_on_select = config.ui.copy_on_select;
                 if self.state.redraw_on_focus_gained != config.ui.redraw_on_focus_gained {
                     self.state.request_client_config_reload = true;
                 }
@@ -1373,6 +1377,8 @@ impl App {
                 }
                 self.loaded_host_cursor = config.ui.host_cursor;
                 self.state.mouse_scroll_lines = config.ui.mouse_scroll_lines();
+                self.state.mouse_scroll_acceleration = config.ui.mouse_scroll_acceleration();
+                self.state.wheel_scroll_momentum = None;
                 self.state.right_click_passthrough_modifiers =
                     config.ui.right_click_passthrough_modifiers();
                 self.state.confirm_close = config.ui.confirm_close;

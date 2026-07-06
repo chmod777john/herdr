@@ -28,11 +28,23 @@ impl App {
     }
 
     fn prepare_terminal_key_forward(&mut self, key: TerminalKey) -> Option<PreparedPaneInput> {
+        let key_event = key.as_key_event();
+
+        if super::terminal_direct_navigation_action(&self.state, key)
+            == Some(super::navigate::NavigateAction::CopySelection)
+        {
+            self.execute_tui_navigate_action(
+                super::navigate::NavigateAction::CopySelection,
+                super::navigate::ActionContext::Direct,
+            );
+            self.selection_autoscroll_deadline = None;
+            self.state.update_dismissed = true;
+            return None;
+        }
+
         self.state.clear_selection();
         self.selection_autoscroll_deadline = None;
         self.state.update_dismissed = true;
-
-        let key_event = key.as_key_event();
 
         if let Some(action) = super::terminal_direct_navigation_action(&self.state, key) {
             debug!(
@@ -400,6 +412,121 @@ mod tests {
 
         app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
 
+        assert!(app.state.selection.is_none());
+    }
+
+    #[tokio::test]
+    async fn releasing_dragged_selection_keeps_highlight_when_copy_on_select_is_disabled() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        ws.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                16 * 1024,
+                &numbered_lines_bytes(64),
+            ),
+        );
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+        app.state.copy_on_select = false;
+
+        let row = info.inner_rect.y;
+        let start_col = info.inner_rect.x + 1;
+        let end_col = info.inner_rect.x + 4;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            start_col,
+            row,
+        ));
+        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), end_col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
+
+        assert!(app.event_rx.try_recv().is_err());
+        assert_visible_selection(&app);
+    }
+
+    #[tokio::test]
+    async fn copy_selection_keybinding_copies_visible_selection_when_copy_on_select_is_disabled() {
+        let mut app = app_for_mouse_test();
+        let mut ws = Workspace::test_new("test");
+        let pane_id = ws.tabs[0].root_pane;
+        let pane_infos = ws.tabs[0].layout.panes(Rect::new(26, 2, 80, 18));
+        let info = pane_infos[0].clone();
+        ws.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
+                info.inner_rect.width,
+                info.inner_rect.height,
+                16 * 1024,
+                b"alpha beta\n",
+            ),
+        );
+
+        app.state.workspaces = vec![ws];
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+        app.state.view.pane_infos = pane_infos;
+        app.state.copy_on_select = false;
+
+        let row = info.inner_rect.y;
+        let start_col = info.inner_rect.x;
+        let end_col = info.inner_rect.x + 4;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            start_col,
+            row,
+        ));
+        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), end_col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
+        assert!(app.event_rx.try_recv().is_err());
+        assert_visible_selection(&app);
+
+        app.state.keybinds.copy_selection = crate::config::ActionKeybinds::direct("ctrl+shift+c");
+        app.handle_terminal_key_headless(TerminalKey::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ));
+
+        assert_eq!(clipboard_write_content(&mut app), b"alpha");
+        assert!(app.state.selection.is_none());
+    }
+
+    #[tokio::test]
+    async fn ctrl_c_still_forwards_to_pane_when_selection_is_visible() {
+        let (mut app, info) = app_with_screen_bytes(b"alpha beta\n");
+        app.state.copy_on_select = false;
+
+        let row = info.inner_rect.y;
+        let start_col = info.inner_rect.x;
+        let end_col = info.inner_rect.x + 4;
+
+        app.handle_mouse(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            start_col,
+            row,
+        ));
+        app.handle_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), end_col, row));
+        app.handle_mouse(mouse(MouseEventKind::Up(MouseButton::Left), end_col, row));
+        assert_visible_selection(&app);
+
+        app.handle_terminal_key_headless(TerminalKey::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        ));
+
+        assert!(app.event_rx.try_recv().is_err());
         assert!(app.state.selection.is_none());
     }
 
